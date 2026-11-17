@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Strike Team Assault</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: linear-gradient(180deg, #09131d, #0b1d2c);
+      color: white;
+      font-family: Tahoma, Arial, sans-serif;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      min-height: 100vh;
+      overflow: hidden;
+    }
+    #gameWrap {
+      position: relative;
+      width: 960px;
+      height: 540px;
+      border: 2px solid #5ec7ff;
+      box-shadow: 0 0 30px rgba(94, 199, 255, 0.3);
+      background: radial-gradient(circle at center, #1a374a, #0a1d2d 60%, #050d14 100%);
+    }
+    canvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+      background: transparent;
+    }
+    #hud {
+      position: absolute;
+      top: 12px;
+      left: 12px;
+      right: 12px;
+      display: flex;
+      justify-content: space-between;
+      font-size: 18px;
+      pointer-events: none;
+      z-index: 2;
+    }
+    .label {
+      background: rgba(0,0,0,0.35);
+      border: 1px solid rgba(255,255,255,0.2);
+      padding: 6px 12px;
+      border-radius: 8px;
+    }
+    #message {
+      position: absolute;
+      inset: 0;
+      display: none;
+      place-items: center;
+      text-align: center;
+      background: rgba(0,0,0,0.55);
+      z-index: 3;
+      font-size: 28px;
+      font-weight: bold;
+    }
+    #message.show { display: grid; }
+    .small {
+      font-size: 16px;
+      opacity: 0.8;
+      margin-top: 8px;
+    }
+  </style>
+</head>
+<body>
+  <div id="gameWrap">
+    <div id="hud">
+      <div class="label">الصحة: <span id="health">100</span></div>
+      <div class="label">النقاط: <span id="score">0</span></div>
+      <div class="label">الموجة: <span id="wave">1</span></div>
+    </div>
+    <canvas id="game" width="960" height="540"></canvas>
+    <div id="message">
+      <div>
+        <div>انتهت اللعبة</div>
+        <div class="small">اضغط الفضاء لإعادة اللعب</div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const canvas = document.getElementById("game");
+    const ctx = canvas.getContext("2d");
+    const healthEl = document.getElementById("health");
+    const scoreEl = document.getElementById("score");
+    const waveEl = document.getElementById("wave");
+    const messageEl = document.getElementById("message");
+
+    const keys = {};
+    const mouse = { x: canvas.width / 2, y: canvas.height / 2, down: false };
+    let gameOver = false;
+    let score = 0;
+    let wave = 1;
+    let lastTime = 0;
+    let spawnTimer = 0;
+
+    const player = {
+      x: canvas.width / 2,
+      y: canvas.height / 2,
+      radius: 16,
+      speed: 240,
+      health: 100,
+      cooldown: 0,
+      angle: 0
+    };
+
+    const bullets = [];
+    const enemies = [];
+    const particles = [];
+
+    function rand(min, max) {
+      return Math.random() * (max - min) + min;
+    }
+
+    function clamp(value, min, max) {
+      return Math.min(Math.max(value, min), max);
+    }
+
+    function createParticle(x, y, color, count = 8) {
+      for (let i = 0; i < count; i++) {
+        particles.push({
+          x,
+          y,
+          vx: rand(-140, 140),
+          vy: rand(-140, 140),
+          life: rand(0.3, 0.7),
+          color,
+          size: rand(2, 5)
+        });
+      }
+    }
+
+    function shoot() {
+      if (gameOver) return;
+      if (player.cooldown > 0) return;
+
+      const dx = mouse.x - player.x;
+      const dy = mouse.y - player.y;
+      const len = Math.hypot(dx, dy) || 1;
+
+      bullets.push({
+        x: player.x + (dx / len) * 22,
+        y: player.y + (dy / len) * 22,
+        vx: (dx / len) * 540,
+        vy: (dy / len) * 540,
+        radius: 4,
+        life: 1.2
+      });
+
+      player.cooldown = 0.15;
+    }
+
+    function spawnEnemy() {
+      const side = Math.floor(Math.random() * 4);
+      let x = 0, y = 0;
+
+      if (side === 0) {
+        x = rand(-20, canvas.width + 20);
+        y = -30;
+      } else if (side === 1) {
+        x = canvas.width + 30;
+        y = rand(-20, canvas.height + 20);
+      } else if (side === 2) {
+        x = rand(-20, canvas.width + 20);
+        y = canvas.height + 30;
+      } else {
+        x = -30;
+        y = rand(-20, canvas.height + 20);
+      }
+
+      const hp = 1 + Math.floor(wave / 2);
+      enemies.push({
+        x, y,
+        radius: 14 + Math.random() * 8,
+        speed: 70 + wave * 8 + Math.random() * 35,
+        hp,
+        maxHp: hp
+      });
+    }
+
+    function resetGame() {
+      player.x = canvas.width / 2;
+      player.y = canvas.height / 2;
+      player.health = 100;
+      player.cooldown = 0;
+      score = 0;
+      wave = 1;
+      bullets.length = 0;
+      enemies.length = 0;
+      particles.length = 0;
+      gameOver = false;
+      messageEl.classList.remove("show");
+      updateHud();
+    }
+
+    function updateHud() {
+      healthEl.textContent = Math.max(0, Math.ceil(player.health));
+      scoreEl.textContent = score;
+      waveEl.textContent = wave;
+    }
+
+    function update(delta) {
+      if (gameOver) return;
+
+      const dirX = (keys["KeyD"] || keys["ArrowRight"] ? 1 : 0) - (keys["KeyA"] || keys["ArrowLeft"] ? 1 : 0);
+      const dirY = (keys["KeyS"] || keys["ArrowDown"] ? 1 : 0) - (keys["KeyW"] || keys["ArrowUp"] ? 1 : 0);
+
+      const mag = Math.hypot(dirX, dirY) || 1;
+      player.x += (dirX / mag) * player.speed * delta;
+      player.y += (dirY / mag) * player.speed * delta;
+
+      player.x = clamp(player.x, 20, canvas.width - 20);
+      player.y = clamp(player.y, 20, canvas.height - 20);
+
+      const dx = mouse.x - player.x;
+      const dy = mouse.y - player.y;
+      player.angle = Math.atan2(dy, dx);
+
+      if (player.cooldown > 0) player.cooldown -= delta;
+
+      for (let i = bullets.length - 1; i >= 0; i--) {
+        const b = bullets[i];
+        b.x += b.vx * delta;
+        b.y += b.vy * delta;
+        b.life -= delta;
+
+        if (b.life <= 0 || b.x < -30 || b.y < -30 || b.x > canvas.width + 30 || b.y > canvas.height + 30) {
+          bullets.splice(i, 1);
+          continue;
+        }
+
+        for (let j = enemies.length - 1; j >= 0; j--) {
+          const e = enemies[j];
+          const dist = Math.hypot(b.x - e.x, b.y - e.y);
+          if (dist < b.radius + e.radius) {
+            e.hp -= 1;
+            createParticle(b.x, b.y, "#ffb347", 4);
+            bullets.splice(i, 1);
+
+            if (e.hp <= 0) {
+              score += 10;
+              createParticle(e.x, e.y, "#ff5f5f", 12);
+              enemies.splice(j, 1);
+              if (score > 0 && score % 100 === 0) {
+                wave += 1;
+              }
+            }
+            break;
+          }
+        }
+      }
+
+      spawnTimer -= delta;
+      if (spawnTimer <= 0) {
+        spawnTimer = Math.max(0.4, 1.2 - wave * 0.08);
+        spawnEnemy();
+      }
+
+      for (let i = enemies.length - 1; i >= 0; i--) {
+        const e = enemies[i];
+        const dxE = player.x - e.x;
+        const dyE = player.y - e.y;
+        const d = Math.hypot(dxE, dyE) || 1;
+
+        e.x += (dxE / d) * e.speed * delta;
+        e.y += (dyE / d) * e.speed * delta;
+
+        if (d < e.radius + player.radius) {
+          player.health -= 20 * delta;
+          createParticle(player.x, player.y, "#88d0ff", 8);
+          if (player.health <= 0) {
+            player.health = 0;
+            gameOver = true;
+            messageEl.classList.add("show");
+            break;
+          }
+        }
+      }
+
+      for (let i = particles.length - 1; i >= 0; i--) {
+        const p = particles[i];
+        p.x += p.vx * delta;
+        p.y += p.vy * delta;
+        p.life -= delta;
+        if (p.life <= 0) particles.splice(i, 1);
+      }
+
+      updateHud();
+    }
+
+    function drawBackground() {
+      ctx.fillStyle = "#0b1d2d";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      for (let i = 0; i < 60; i++) {
+        const x = (i * 97 + (performance.now() * 0.02)) % (canvas.width + 50);
+        const y = (i * 53) % (canvas.height + 50);
+        ctx.fillStyle = "rgba(255,255,255,0.08)";
+        ctx.fillRect*
+
